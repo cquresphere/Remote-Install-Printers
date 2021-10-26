@@ -19,11 +19,13 @@
 .OUTPUTS
   You can generate raport of printers available on particular print server. 
   Raport is created in Excel format.
+  In location:
+  "C:\Temp\Printers_Report_"+ $Global:PrintersLocation + $GetSaveTime +'.xlsx' 
 .NOTES
-  Version:        3.0
+  Version:        3.1
   Author:         cquresphere aka Karol Kula
   Creation Date:  26.10.2021
-  Purpose/Change: Adaptation of the script for universal use for everyone 
+  Purpose/Change: fix problem with driver installation after patch for CVE-2021-34481   
   
 .EXAMPLE
   <Example goes here. Repeat this attribute for more than one example>
@@ -135,7 +137,7 @@ Function GetPrinters{
     ForEach ($Printer in $Printers){
         $PrinterListViewItem = New-Object System.Windows.Forms.ListViewItem($Printer.Name)
  
-        $Printer.psObject.Properties | Where {$_.Name -ne "Name"} | ForEach-Object {
+        $Printer.psObject.Properties | Where-Object {$_.Name -ne "Name"} | ForEach-Object {
             $ColumnName = $_.Name
             $PrinterListViewItem.SubItems.Add("$($Printer.$ColumnName)") | Out-Null
             if($PrinterListViewItem.SubItems.Text -Like 'Error*'){
@@ -180,7 +182,7 @@ Function AddPrinter{
         if($Global:Destination -eq 'Local'){
             $SelectedPrinters = @($listview_Printers.SelectedIndices)
     
-            $IdColumnIndex = ($listview_Printers.Columns | Where {$_.Text -eq "Name"}).Index
+            $IdColumnIndex = ($listview_Printers.Columns | Where-Object {$_.Text -eq "Name"}).Index
             
             $SelectedPrinters | ForEach-Object {
     
@@ -204,11 +206,11 @@ Function AddPrinter{
         elseif($Global:Destination -eq "Remote Add Printers"){
 
             $SelectedPrinters = @($listview_Printers.SelectedIndices)
-            $IdColumnIndex = ($listview_Printers.Columns | Where {$_.Text -eq "Name"}).Index
-            $IdColumnIndex2 = ($listview_Printers.Columns | Where {$_.Text -eq "PortName"}).Index 
-            $IdColumnIndex3 = ($listview_Printers.Columns | Where {$_.Text -eq "DriverName"}).Index
-            $IdColumnIndex4 = ($listview_Printers.Columns | Where {$_.Text -eq "Comment"}).Index
-            $IdColumnIndex5 = ($listview_Printers.Columns | Where {$_.Text -eq "Location"}).Index
+            $IdColumnIndex = ($listview_Printers.Columns | Where-Object {$_.Text -eq "Name"}).Index
+            $IdColumnIndex2 = ($listview_Printers.Columns | Where-Object {$_.Text -eq "PortName"}).Index 
+            $IdColumnIndex3 = ($listview_Printers.Columns | Where-Object {$_.Text -eq "DriverName"}).Index
+            $IdColumnIndex4 = ($listview_Printers.Columns | Where-Object {$_.Text -eq "Comment"}).Index
+            $IdColumnIndex5 = ($listview_Printers.Columns | Where-Object {$_.Text -eq "Location"}).Index
     
             $SelectedPrinters | ForEach-Object {
 
@@ -241,9 +243,32 @@ Function AddPrinter{
 Function AddPrinter2{
     UpdateValues
 
+    $script = {
+        $ErrorActionPreference = 'SilentlyContinue'
+        New-Item -Path 'HKLM:\Software\Policies\Microsoft\Windows NT\Printers' -Name PointAndPrint
+        Set-ItemProperty -Path 'HKLM:\Software\Policies\Microsoft\Windows NT\Printers\PointAndPrint' -Name RestrictDriverInstallationToAdministrators -Value 0 -type DWORD
+    }
+    $command = $script.ToString()
+    
+    $bytes = [System.Text.Encoding]::Unicode.GetBytes( $command )
+    $encodedCommand = [Convert]::ToBase64String( $bytes )
+
+    $script2 = {
+        $ErrorActionPreference = 'SilentlyContinue'
+        Set-ItemProperty -Path 'HKLM:\Software\Policies\Microsoft\Windows NT\Printers\PointAndPrint' -Name RestrictDriverInstallationToAdministrators -Value 1 -type DWORD
+    }
+    $command2 = $script2.ToString()
+    
+    $bytes2 = [System.Text.Encoding]::Unicode.GetBytes( $command2 )
+    $encodedCommand2 = [Convert]::ToBase64String( $bytes2 )
+
+    $RestricDrvrInstallToAdminOff = powershell.exe -ExecutionPolicy ByPass -WindowStyle Minimized -EncodedCommand $encodedCommand
+    
+    $RestrictDrvrInstallToAdminOn = powershell.exe -ExecutionPolicy ByPass -WindowStyle Minimized -EncodedCommand $encodedCommand2
+
         if($Global:Destination -eq 'Local'){
             $SelectedPrinters = @($listview_Printers.SelectedIndices)
-            $IdColumnIndex = ($listview_Printers.Columns | Where {$_.Text -eq "Name"}).Index
+            $IdColumnIndex = ($listview_Printers.Columns | Where-Object {$_.Text -eq "Name"}).Index
             $SelectedPrinters | ForEach-Object {
                 $PrintersName = ($listview_Printers.Items[$_].SubItems[$IdColumnIndex]).Text
                 Write-host "Script is Adding printer:$PrintersName on local computer"  -ForegroundColor Green
@@ -261,8 +286,11 @@ Function AddPrinter2{
 
         }
         elseif($Global:Destination -eq "Remote Add Printers"){
-            $IdColumnIndex = ($listview_Printers.Columns | Where {$_.Text -eq "Name"}).Index
+            $IdColumnIndex = ($listview_Printers.Columns | Where-Object {$_.Text -eq "Name"}).Index
             $SelectedPrinters = @($listview_Printers.SelectedIndices)
+            $argument0 = "/k psexec.exe -sid \\$Global:DestinationHostName $RestricDrvrInstallToAdminOff"
+            Write-Host $argument0
+            Start-Process cmd.exe $argument0
             
             $SelectedPrinters | ForEach-Object {
                 $PrintersName = ($listview_Printers.Items[$_].SubItems[$IdColumnIndex]).Text
@@ -273,7 +301,11 @@ Function AddPrinter2{
                 Write-Host $argument
                 Start-Process cmd.exe $argument
                 Start-Sleep -Seconds 12
-            }               
+            }   
+            $argument1 = "/k psexec.exe -sid \\$Global:DestinationHostName $RestrictDrvrInstallToAdminOn"
+            Write-Host $argument1
+            Start-Process cmd.exe $argument1
+                        
          } 
 }
 
@@ -291,7 +323,7 @@ Function OpenInBrowser{
     $SelectedPrinterPortName =  $listview_Printers.SelectedItems[0].SubItems[2].Text #.PortName
     
     if($SelectedPrinterPortName -match $IPv4Regex){
-        start microsoft-edge:http://$SelectedPrinterPortName
+        Start-Process microsoft-edge:http://$SelectedPrinterPortName
     }
 
 }
@@ -1319,7 +1351,6 @@ $stream.Write($iconBytes, 0, $iconBytes.Length);
 $iconImage       = [System.Drawing.Image]::FromStream($stream, $true)
 $form.Icon       = [System.Drawing.Icon]::FromHandle((New-Object System.Drawing.Bitmap -Argument $stream).GetHIcon())
 
-
 $form.Add_Shown({$form.Activate();UpdateLocation})
 
 #Events
@@ -1335,14 +1366,11 @@ $ButtonReport_OnClick={
     $Printers | Export-Excel $File -Show -AutoSize -AutoFilter -ConditionalText $ConditionErrorText,$ConditionOfflineText,$ConditionTonerLow,$ConditionPaperJam
 }
 
-
 $ButtonRefresh_OnClick={
     Getprinters 
 }
-
 #Tooltips
 $tooltipinfo = New-Object 'System.Windows.Forms.ToolTip'
-
 
 #Form Elements
 $ButtonAdd = New-Object System.Windows.Forms.Button
@@ -1353,7 +1381,6 @@ $tooltipinfo.SetToolTip($ButtonAdd, "Adds selected printer(s) method 1")
 $form.AcceptButton = $ButtonAdd
 $ButtonAdd.Add_Click({Proceed2})
 $form.Controls.Add($ButtonAdd)
-
 
 $ButtonOK = New-Object System.Windows.Forms.Button
 $ButtonOK.Location = New-Object System.Drawing.Point(400,570)
@@ -1422,7 +1449,6 @@ $TextBoxComputerName.location         = New-Object System.Drawing.Point(900,40)
 $TextBoxComputerName.Font             = 'Microsoft Sans Serif,10'
 $form.Controls.Add($TextBoxComputerName)
 
-
 $Items = $printservers.PrintersLocation
 
 $ComboBoxLocation                  = New-Object system.Windows.Forms.ComboBox
@@ -1463,8 +1489,6 @@ $label.Location = New-Object System.Drawing.Point(10,70)
 $label.Size = New-Object System.Drawing.Size(500,20)
 $label.Text = 'Please choose the printer(s) to add: (hold down the key Ctrl to choose more)'
 $form.Controls.Add($label)
-
-
 
 # Adding a listView control to Form, which will hold all Printer information
 $Global:listview_Printers = New-Object System.Windows.Forms.ListView
