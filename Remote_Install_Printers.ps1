@@ -243,70 +243,57 @@ Function AddPrinter{
 Function AddPrinter2{
     UpdateValues
 
-    $script = {
-        $ErrorActionPreference = 'SilentlyContinue'
-        New-Item -Path 'HKLM:\Software\Policies\Microsoft\Windows NT\Printers' -Name PointAndPrint
-        Set-ItemProperty -Path 'HKLM:\Software\Policies\Microsoft\Windows NT\Printers\PointAndPrint' -Name RestrictDriverInstallationToAdministrators -Value 0 -type DWORD
-    }
-    $command = $script.ToString()
-    
-    $bytes = [System.Text.Encoding]::Unicode.GetBytes( $command )
-    $encodedCommand = [Convert]::ToBase64String( $bytes )
+    $RestricDrvrInstallToAdminOff1 = "powershell.exe -ExecutionPolicy ByPass New-Item -Path 'HKLM:\Software\Policies\Microsoft\Windows NT\Printers' -Name PointAndPrint"
+    $RestricDrvrInstallToAdminOff2 = "powershell.exe -ExecutionPolicy ByPass Set-ItemProperty -Path 'HKLM:\Software\Policies\Microsoft\Windows NT\Printers\PointAndPrint' -Name RestrictDriverInstallationToAdministrators -Value 0 -type DWORD"
 
-    $script2 = {
-        $ErrorActionPreference = 'SilentlyContinue'
-        Set-ItemProperty -Path 'HKLM:\Software\Policies\Microsoft\Windows NT\Printers\PointAndPrint' -Name RestrictDriverInstallationToAdministrators -Value 1 -type DWORD
-    }
-    $command2 = $script2.ToString()
-    
-    $bytes2 = [System.Text.Encoding]::Unicode.GetBytes( $command2 )
-    $encodedCommand2 = [Convert]::ToBase64String( $bytes2 )
+    $RestrictDrvrInstallToAdminOn = "powershell.exe -windowstyle hidden Set-ItemProperty -Path 'HKLM:\Software\Policies\Microsoft\Windows NT\Printers\PointAndPrint' -Name RestrictDriverInstallationToAdministrators -Value 1 -type DWORD"
 
-    $RestricDrvrInstallToAdminOff = powershell.exe -ExecutionPolicy ByPass -WindowStyle Minimized -EncodedCommand $encodedCommand
-    
-    $RestrictDrvrInstallToAdminOn = powershell.exe -ExecutionPolicy ByPass -WindowStyle Minimized -EncodedCommand $encodedCommand2
-
-        if($Global:Destination -eq 'Local'){
-            $SelectedPrinters = @($listview_Printers.SelectedIndices)
-            $IdColumnIndex = ($listview_Printers.Columns | Where-Object {$_.Text -eq "Name"}).Index
-            $SelectedPrinters | ForEach-Object {
-                $PrintersName = ($listview_Printers.Items[$_].SubItems[$IdColumnIndex]).Text
-                Write-host "Script is Adding printer:$PrintersName on local computer"  -ForegroundColor Green
-                $ConnectionName = "$Global:Location\$PrintersName"
-                Write-Host 
-                Add-Printer -connectionname $ConnectionName 
-            }
+    if($Global:Destination -eq 'Local'){
+        $SelectedPrinters = @($listview_Printers.SelectedIndices)
+        $IdColumnIndex = ($listview_Printers.Columns | Where-Object {$_.Text -eq "Name"}).Index
+        $SelectedPrinters | ForEach-Object {
+            $PrintersName = ($listview_Printers.Items[$_].SubItems[$IdColumnIndex]).Text
+            Write-host "Script is Adding printer:$PrintersName on local computer"  -ForegroundColor Green
+            $ConnectionName = "$Global:Location\$PrintersName"
+            Write-Host 
+            Add-Printer -connectionname $ConnectionName 
         }
-        elseif($Global:Destination -eq "Remote List"){
-            
-            Write-host "Script is opening folder from printserver $Global:Location on:$Global:DestinationHostName" -ForegroundColor Green
-            $argument = "/c psexec.exe -sid \\$Global:DestinationHostName explorer.exe $Global:Location"
+    }
+    elseif($Global:Destination -eq "Remote List"){
+        
+        Write-host "Script is opening folder from printserver $Global:Location on:$Global:DestinationHostName" -ForegroundColor Green
+        $argument = "/c psexec.exe -sid \\$Global:DestinationHostName explorer.exe $Global:Location"
+        Write-Host $argument
+        Start-Process cmd.exe $argument
+
+    }
+    elseif($Global:Destination -eq "Remote Add Printers"){
+        $IdColumnIndex = ($listview_Printers.Columns | Where-Object {$_.Text -eq "Name"}).Index
+        $SelectedPrinters = @($listview_Printers.SelectedIndices)
+        $argument0 = "/k psexec.exe -sid \\$Global:DestinationHostName $RestricDrvrInstallToAdminOff1"
+        Write-Host $argument0
+        Start-Sleep -Seconds 3
+        Start-Process cmd.exe $argument0
+        $argument1 = "/k psexec.exe -sid \\$Global:DestinationHostName $RestricDrvrInstallToAdminOff2"
+        Write-Host $argument1
+        Start-Process cmd.exe $argument1
+        Start-Sleep -Seconds 3
+        
+        $SelectedPrinters | ForEach-Object {
+            $PrintersName = ($listview_Printers.Items[$_].SubItems[$IdColumnIndex]).Text
+            Write-host "Adding remotely printer:$PrintersName to: $Global:DestinationHostName by PsExec" -ForegroundColor Green
+            Start-Sleep -Seconds 2
+                
+            $argument = "/c psexec.exe -sid \\$Global:DestinationHostName explorer.exe $Global:Location\$PrintersName"
             Write-Host $argument
             Start-Process cmd.exe $argument
-
-        }
-        elseif($Global:Destination -eq "Remote Add Printers"){
-            $IdColumnIndex = ($listview_Printers.Columns | Where-Object {$_.Text -eq "Name"}).Index
-            $SelectedPrinters = @($listview_Printers.SelectedIndices)
-            $argument0 = "/k psexec.exe -sid \\$Global:DestinationHostName $RestricDrvrInstallToAdminOff"
-            Write-Host $argument0
-            Start-Process cmd.exe $argument0
-            
-            $SelectedPrinters | ForEach-Object {
-                $PrintersName = ($listview_Printers.Items[$_].SubItems[$IdColumnIndex]).Text
-                Write-host "Adding remotely printer:$PrintersName to: $Global:DestinationHostName by PsExec" -ForegroundColor Green
-                Start-Sleep -Seconds 2
+            Start-Sleep -Seconds 12
+        }   
+        $argument2 = "/k psexec.exe -sid  -n 180 \\$Global:DestinationHostName $RestrictDrvrInstallToAdminOn"
+        Write-Host $argument2
+        Start-Process cmd.exe $argument2
                     
-                $argument = "/c psexec.exe -sid \\$Global:DestinationHostName explorer.exe $Global:Location\$PrintersName"
-                Write-Host $argument
-                Start-Process cmd.exe $argument
-                Start-Sleep -Seconds 12
-            }   
-            $argument1 = "/k psexec.exe -sid \\$Global:DestinationHostName $RestrictDrvrInstallToAdminOn"
-            Write-Host $argument1
-            Start-Process cmd.exe $argument1
-                        
-         } 
+        } 
 }
 
 function Proceed{
